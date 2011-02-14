@@ -1,3 +1,5 @@
+require 'benchmark'
+
 # encoding: UTF-8
 module MongoMapper
   module Plugins
@@ -22,15 +24,21 @@ module MongoMapper
         end
 
         def all(opts={})
-          super.map { |doc| model.load(doc) }
+          result = nil
+          log_time("all query #{to_hash.inspect}") { result = super }
+          log_time("all load  #{to_hash.inspect}") { result.map { |doc| model.load(doc) } }
         end
 
         def first(opts={})
-          model.load(super)
+          result = nil
+          log_time("first query #{to_hash.inspect}") { result = super }
+          log_time("first load  #{to_hash.inspect}") { model.load(result) }
         end
 
         def last(opts={})
-          model.load(super)
+          result = nil
+          log_time("last query #{to_hash.inspect}") { result = super }
+          log_time("last load  #{to_hash.inspect}") { model.load(result) }
         end
 
         private
@@ -39,6 +47,21 @@ module MongoMapper
             result = model.send(method, *args, &block)
             return super unless result.is_a?(Plucky::Query)
             merge(result)
+          end
+          
+          def log_time(msg = "")
+            logger = model.logger
+            result = nil
+            if logger
+              time = Benchmark.realtime do
+                result = yield
+              end
+              time_ms = (time*10000) / 10.0
+              logger.debug "(#{time_ms}ms) #{msg}"
+              result
+            else
+              yield
+            end
           end
       end
     end
