@@ -52,7 +52,7 @@ module MongoMapper
           def log_time(msg = "")
             logger = model.logger
             result = nil
-            if logger
+            if logger && logger.debug?
               time = Benchmark.realtime do
                 result = yield
               end
