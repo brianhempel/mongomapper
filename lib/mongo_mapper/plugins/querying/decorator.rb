@@ -56,7 +56,7 @@ module MongoMapper
               time = Benchmark.realtime do
                 result = yield
               end
-              time_ms = (time*10000) / 10.0
+              time_ms = (time*10000).round / 10.0
               logger.debug "(#{time_ms}ms) #{msg}"
               result
             else
