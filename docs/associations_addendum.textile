@@ -1,0 +1,201 @@
+
+h3(#class-methods-associations-equal). associations=(hash)
+
+Sets the associations of a model, but skips creating getter and setter methods for instances of the model.  Probably not useful in practice.
+
+h4(#class-methods-associations-equal-parameters). Parameters
+
+* *hash*: A hash of the same form returned by the @associations@ method.
+
+h4(#class-methods-associations-equal-example). Example
+
+<source:ruby>class Cardinal
+  include MongoMapper::Document
+  many :feathers
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+class Sparrow
+  include MongoMapper::Document
+end
+
+Cardinal.associations # {"feathers"=> ... }
+Cardinal.new.feathers # []
+Sparrow.associations = Cardinal.associations
+Sparrow.associations # {"feathers"=> ... }
+Sparrow.new.feathers # NoMethodError: undefined method `feathers'</source>
+
+h3(#class-methods-inherited). inherited(subclass)
+
+Makes sure all subclasses of the model inherit associations.  Automatically called by Ruby when you make a subclass of your model.
+
+h2(#instance-methods). Instance Methods
+
+h3(#instance-methods-associations). associations
+
+h3(#instance-methods-embedded-associations). embedded_associations
+
+h3(#instance-methods-get-proxy). get_proxy(association)
+
+h3(#instance-methods-save-to-collection). save_to_collection(options={})
+
+
+
+h3. Many (ManyDocumentsProxy)
+
+<source:ruby>
+class Bird
+  include MongoMapper::Document
+  many :feathers
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"]
+f.key_names # ["_id", "bird_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "bird_id"=>BSON::ObjectId(...)}</source>
+
+h3. Many :in (InArrayProxy)
+
+<source:ruby>
+class Bird
+  include MongoMapper::Document
+  key :foo, Array # you have to explicitly create a :foo array for :in => foo to work
+  many :feathers, :in => :foo
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id", "foo"] 
+f.key_names # ["_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...), "foo"=>[BSON::ObjectId(...)]}
+f.to_mongo # {"_id"=>BSON::ObjectId(...)}</source>
+
+h3. Many :as (ManyDocumentAsProxy)
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers, :as => :foo
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"] 
+f.key_names # ["_id", "foo_type", "foo_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "foo_type"=>"Bird", "foo_id"=>BSON::ObjectId(...)}</source>
+
+h3. Many :polymorphic (ManyPolymorphicProxy)
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers, :polymorphic => true
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"]
+f.key_names # ["_id", "_type", "bird_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "_type"=>"Feather", "bird_id"=>BSON::ObjectId(...)}</source>
+
+h3. Many with :foreign_key
+
+When the many association is stored in a separate document, you may rename the key in the other document.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers, :foreign_key => :foo
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"] 
+f.key_names # ["_id", "foo"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "foo"=>BSON::ObjectId(...)}</source>
+
+It works for polymorphic documents as well.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers, :foreign_key => :foo, :polymorphic => true
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"] 
+f.key_names # ["_id", "_type", "foo"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "_type"=>"Feather", "foo"=>BSON::ObjectId(...)}</source>
+
+h3. Combinations that don't work
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers, :as => :foo, :polymorphic => true # doesn't work, :polymorphic overrides :as
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id"]
+f.key_names # ["_id", "_type", "bird_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...)}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "_type"=>"Feather", "bird_id"=>BSON::ObjectId(...)}</source>
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  key :foo, Array
+  many :feathers, :in => :foo, :polymorphic => true  # doesn't work, :polymorphic overrides :in
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+b = Bird.new
+f = Feather.new
+b.feathers << f
+b.key_names # ["_id", "foo"]
+f.key_names # ["_id", "_type", "bird_id"]
+b.to_mongo # {"_id"=>BSON::ObjectId(...), "foo"=>[]}
+f.to_mongo # {"_id"=>BSON::ObjectId(...), "_type"=>"Feather", "bird_id"=>BSON::ObjectId(...)}</source>

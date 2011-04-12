@@ -1,0 +1,1 @@
+before_save runs after saving associations?  (one association)  very big problem.

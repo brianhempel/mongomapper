@@ -1,0 +1,3 @@
+this makes sense.  If the bird is destroyed by some other process, the association is broken.  No problems.
+
+If you want to store the association keys in an array in the "parent" document, see the @:in@ option below.

@@ -1,0 +1,233 @@
+[ ] Make examples h3 instead of h4
+[ ] Schema
+[ ] Move Schema into the examples
+[ ] :foreign_key vs :as (:as requires the belongs_to to be polymorphic and fails if it's not, :foreign_key just changes the name of the key storing the object)
+[ ] Assoc saves
+[ ] Assoc options 
+[ ] Split out class methods
+[ ] Not use garbage in examples
+
+MongoMapper Schema Cases
+------
+
+
+== Many Belongs_to
+
+class Tree
+  include MongoMapper::Document
+  many :birds
+end
+
+class Bird
+  include MongoMapper::Document
+  belongs_to :tree
+end
+
+
+== One Belongs_to
+
+class NewCaledonianCrow
+  include MongoMapper::Document
+  one :tool, :dependent => :nullify # MM currently has no default :dependent behavior for the one association, so we specify it to avoid hard-to-track bugs :) 
+end
+
+class Tool
+  include MongoMapper::Document
+  belongs_to :new_caledonian_crow
+end
+
+
+== Many Embedded
+
+class Bird
+  include MongoMapper::Document
+  many :feathers
+end
+
+class Feather
+  include MongoMapper::EmbeddedDocument
+  embedded_in :bird
+end
+
+
+== One Embedded
+
+class Bird
+  include MongoMapper::Document
+  one :beak
+end
+
+class Beak
+  include MongoMapper::EmbeddedDocument
+  embedded_in :bird
+end
+
+
+== Many-to-Many
+
+class Book
+  include MongoMapper::Document
+  key :author_ids, Array
+  many :authors, :in => :author_ids
+end
+
+class Author
+  include MongoMapper::Document
+end
+
+
+== Polymorphic Cases
+
+== Polymorphism on the Many Side
+
+class Article
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Product
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Comment
+  include MongoMapper::Document
+  belongs_to :commentable, :polymorphic => true
+end
+
+
+== Polymorphism on the Many Side with SCI
+
+class Commentable
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Article < Commentable
+end
+
+class Product < Commentable
+end
+
+class Comment
+  include MongoMapper::Document
+  belongs_to :commentable, :polymorphic => true
+end
+
+
+== Polymorphism on the Belongs_to Side with SCI
+
+class Human
+  include MongoMapper::Document
+  many :favorite_things, :polymorphic => true
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :human
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+== Embedded Polymorphism
+
+class Human
+  include MongoMapper::Document
+  many :favorite_things, :polymorphic => true
+end
+
+class FavoriteThing
+  include MongoMapper::EmbeddedDocument
+  embedded_in :human
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+== Polymorphism on both sides of one-to-many using SCI
+
+class Liker
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class Human < Liker
+end
+
+class SophisticatedDolphin < Liker
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :liker, :polymorphic => true
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+== Polymorphism on both sides of one-to-many with full polymorphism on the many side
+
+class Human
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class SophisticatedDolphin
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :liker, :polymorphic => true
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+== Polymorphism on both sides of many-to-may with SCI and array keys
+
+class Animal
+  include MongoMapper::Document
+  key :food_ids, Array, :typecast => 'ObjectId'
+  many :foods, :in => :food_ids
+end
+
+class Rat < Animal
+end
+
+class Food
+  include MongoMapper::Document
+end
+
+class Garbage < Food
+end
+
+== A MongoDB join table
+
+class Rat
+  include MongoMapper::Document
+  many :animal_eats, :as => :animal
+end
+
+class Seagull
+  include MongoMapper::Document
+  many :animal_eats, :as => :animal
+end
+
+class AnimalEat
+  include MongoMapper::Document
+  belongs_to :animal, :polymorphic => true
+  belongs_to :food, :polymorphic => true
+end
+
+class Garbage
+  include MongoMapper::Document
+  many :animal_eats, :as => :food
+end
+
+class PotatoChips
+  include MongoMapper::Document
+  many :animal_eats, :as => :food
+end

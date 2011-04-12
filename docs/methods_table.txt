@@ -1,0 +1,42 @@
+||@many@|@many@ <br />in array|@many@ embedded|@one@|@one@ embedded|@belongs_to@|
+|*On the instance*|||||||
+|others|x|x|x||||
+|others=|x|x|x||||
+|other||||x|x|x|
+|other=||||x|x|x|
+|other?||||x|x|x|
+||||||||
+|*On the association*|||||||
+|klass|x|x|x|x|x|x|
+|collection|x|x|x|x|x|x|
+|association|x|x|x|x|x|x|
+|to_json|x|x|x|x|x|x|
+|as_json|x|x|x|x|x|x|
+|loaded?|x|x|x|x|x|x|
+|nil?|x|x|x|x|x|x|
+|blank?|x|x|x|x|x|x|
+|present?|x|x|x|x|x|x|
+|reload|x|x|x|x|x|x|
+|reset|x|x|x|x|x|x|
+|===|x|x|x|x|x|x|
+|replace|x|x|x|x|x|x|
+|<<|x|x|x||||
+|push|x|x|x||||
+|concat|x|x|x||||
+|build|x||x|x|x||
+|create|x|x||x|||
+|create!|x|x||x|||
+|destroy_all|x|x|||||
+|delete_all|x|x|||||
+|nullify|x|x|||||
+|count|x|x|x||||
+|to_ary|x|x|x||||
+|include?|x|x|x||||
+|find|x|x|x||||
+|find!|x|x|||||
+|paginate|x|x|||||
+|all|x|x|||||
+|first|x|x|||||
+|last|x|x|||||
+|"dynamic finder methods":https://github.com/jnunemaker/mongomapper/blob/master/lib/mongo_mapper/plugins/dynamic_querying/dynamic_finder.rb|x|x|||||
+|"other query methods from plucky":https://github.com/jnunemaker/mongomapper/blob/master/lib/mongo_mapper/plugins/querying/plucky_methods.rb|x||||||

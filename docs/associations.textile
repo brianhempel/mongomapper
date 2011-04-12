@@ -1,0 +1,980 @@
+
+*Important Note: This needs to be reviewed and corrected. It makes use of eval which should never happen.*
+* 3-7-2011 "eval fixed":#many-to-many-example
+
+* "Using Associations":#using-associations
+* "Polymorphic Associations":#polymorphic-associations
+* "Association Extensions":#association-extensions
+* "Method Table":#method-table
+* "When do associations trigger saves?":#when-do-associations-trigger-saves
+* "Schema":#schema
+* "Class Methods":#class-methods
+
+MongoMapper provides associations so you can link your models together.  When you define an association, MongoMapper creates some methods on your model that make it easy to create, break, find, and persist the connections between objects in your application.
+
+h2(#using-associations). Using Associations
+
+* "A One-to-Many Tutorial":#a-one-to-many-tutorial
+** "Defining the association":#defining-the-association
+** "Linking some objects together":#linking-some-objects-together
+** "If you NEED to know what's cached, turn on logging.":#if-you-need-to-know-whats-cached-turn-on-logging
+** "What it looks like in the database":#what-it-looks-like-in-the-database
+** "The association key":#the-association-key
+** "MongoMapper query magic":#mongomapper-query-magic
+** "Breaking an association":#breaking-an-association
+* "One-to-Many Embedded Example":#one-to-many-embedded-example
+* "One-to-One Example":#one-to-one-example
+* "One-to-One Embedded Example":#one-to-one-embedded-example
+* "Many-to-Many Example":#many-to-many-example
+
+h3(#a-one-to-many-tutorial). A One-to-Many Tutorial
+
+h4(#defining-the-association). Defining the association
+
+Let's say we want to model the birds perching in a birch tree outside the window.  One tree can have many birds perching on it, so we call @many@ in the Tree model.
+
+<source:ruby>class Tree
+  include MongoMapper::Document
+  many :birds
+end</source>
+
+The call to @many@ creates @birds@ and @birds=@ methods for instances of the @Tree@ class.
+
+In the bird model we use @belongs_to@ to say that a bird will be associated with a tree.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  belongs_to :tree
+end</source>
+
+@belongs_to@ adds @tree@, @tree=@, and @tree?@ methods to instances of @Bird@.
+
+h4(#linking-some-objects-together). Linking some objects together
+
+Let's use all these new methods to put some birds in a tree.  The following code adds four birds to a tree in four different ways.
+
+<source:ruby>tree = Tree.new(:birds => [Bird.new(:name => 'Jay')])
+tree.birds.create!(:name => 'Wren')
+b = tree.birds.build(:name => 'House Finch') # build makes a bird without saving it
+b.save! # here we save it
+tree.new? # true -- the birds have been saved each time but the trees haven't
+tree.birds << Bird.new(:name => 'Falcon')
+tree.new? # false -- the concat triggers a save, I don't know why
+tree.birds.size # 4</source>
+
+Because we've declared @belongs_to@ in the @Bird@ model, we can add another bird to our tree by using the @tree=@ method of a new @Bird@ object.
+
+<source:ruby>raven = Bird.new(:name => 'Raven')
+raven.tree = tree # <Tree ... >
+raven.save! # true
+tree.birds.size # 4 -- whoops! caching
+tree.birds.reload.size # 5</source>
+
+We ran into a bit of a caching gotcha.  The @many@ and the @belongs_to@ associations don't talk to each other in Ruby, they just query the database and cache their own result for subsequent calls.  To reset the tree.birds cache, we just call @reload@ and then it looks in the database and finds the raven we added to the tree via the bird's @belongs_to@ association.
+
+h4(#if-you-need-to-know-whats-cached-turn-on-logging). If you NEED to know what's cached, turn on logging.
+
+When we called @tree.birds@ in the preceding examples MongoMapper did one query to MongoDB and and cached the four @Bird@ objects in the @tree.birds@ proxy.  Caching is a good thing.  It means we don't have to hit the database every time we call @tree.birds@.  Calling @tree.birds.size@ then @tree.birds[0]@ then @tree.birds[1]@ is only one database query, not three.
+
+In most cases speed is not important, but if you REALLY NEED to reduce the number of queries, turn on "Logging":/documentation/plugins/logger/.  For example, logging will tell you that @tree.birds.first@ triggers a query every time but @tree.birds[0]@ does not. But let's not fret prematurely because we mustn't forget the first rule of optimization: "don't.":http://fetter.org/optimization.html
+
+h4(#what-it-looks-like-in-the-database). What it looks like in the database
+
+While all of MongoMapper's nice Ruby methods make it easy to manage our association, they don't immediately tell us how our association is stored in the database.  To find out, we can call @to_mongo@ to look at the schema MM uses to keep our birds in the tree.
+
+<source:ruby>tree.to_mongo # =>
+{
+  "_id" => BSON::ObjectId('...')
+}
+raven.to_mongo # =>
+{
+  "_id"     => BSON::ObjectId('...'),
+  "name"    => "Raven",
+  "tree_id" => BSON::ObjectId('...')
+}</source>
+
+MongoMapper saves our @many@ association by giving each bird a @tree_id@ key.  So when we call @tree.birds@ for the first time, MM does a query on the Birds collection like @Bird.where(:tree_id => tree.id)@ in order to fetch all the associated birds.
+
+h4(#the-association-key). The association key
+
+Because both the @many@ and @belongs_to@ associations will create the @tree_id@ key in @Bird@ objects, it's common to explicitly declare @tree_id@ as a key in the model.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  key :name
+  key :tree_id, ObjectId
+  belongs_to :tree
+end</source>
+
+Explicitly declaring the key has a few benefits.  Declaring the key helps us keep track of the schema of our models.  Declaring the key prevents a @NoMethodError@ if we try to use the key before it has been set by an association.  Also, if we wanted to require all birds to have a tree, we could make the key required.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  key :name
+  key :tree_id, ObjectId, :required => true
+  belongs_to :tree
+end</source>
+
+Now the bird will fail validation and won't save if @tree_id@ isn't set.  (See the "Validations plugin":/documentation/plugins/validations for more.)
+
+Only for the sake of brevity, we won't declare association keys in most of the examples.
+
+h4(#mongomapper-query-magic). MongoMapper query magic
+
+Almost everything in MongoMapper accepts query criteria, including the associations we defined on our model.
+
+<source:ruby>tree.birds.where(:name => /^J/).first.name # "Jay"
+# or
+tree.birds.find_by_name(/^J/).name # "Jay"</source>
+
+And that works because MongoDB supports querying with regular expressions.  Yes, it's that awesome.  (Note: Regexps are broken in plucky 0.36, but "it's been patched":https://github.com/jnunemaker/plucky/commit/c0613ffbe6115dee9cc19d44d20fa3f03485e9f6 so if you need regexps you can clone from Github or wait for the next release.)
+
+h4(#breaking-an-association). Breaking an association
+
+Say a pair of hawks lands and scatters away all the birds from our tree.  What happens to our association?
+
+<source:ruby># continuing our example...hawks!
+hawk1 = Bird.new(:name => 'Hawk1')
+hawk2 = Bird.new(:name => 'Hawk2')
+tree.birds = [hawk1, hawk2]
+tree.birds.size # 2
+raven.reload # MongoMapper::DocumentNotFound
+Bird.count # 2</source>
+
+Oh my!  The hawks didn't just _scare_ the birds, they _ate_ them all!  No trace of the birds remains in the database!  When MongoMapper replaced our association, it called @destroy@ on each of the bird objects.  We could have prevented that behavior using @nullify@ to clear the association ourselves, which sets @tree_id@ to @nil@ in each of the birds.
+
+<source:ruby># let's go back and try again
+hawk1 = Bird.new(:name => 'Hawk1')
+hawk2 = Bird.new(:name => 'Hawk2')
+tree.birds.nullify
+tree.birds = [hawk1, hawk2]
+tree.birds.size # 2
+raven.reload # <Bird _id: ..., name: "Raven", tree_id: nil>
+Bird.count # 7</source>
+
+Ahh, the birds lived.
+
+h3(#one-to-many-embedded-example). One-to-Many Embedded Example
+
+When one document will almost always be fetched with another, it makes sense to embed.  Just include @MongoMapper::EmbeddedDocument@ instead of @MongoMapper::Document@.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  key :name
+  many :feathers
+end
+
+class Feather
+  include MongoMapper::EmbeddedDocument
+  key :color
+  embedded_in :bird
+end
+
+# let's try it
+bunting = Bird.new(:name => 'Indigo Bunting')
+bunting.feathers << Feather.new(:color => 'blue')
+bunting.feathers << Feather.new(:color => 'indigo')
+bunting.to_mongo # =>
+{
+  "_id"      => BSON::ObjectId('...'),
+  "name"     => "Indigo Bunting",
+  "feathers" => [
+    {
+      "_id"   => BSON::ObjectId('...'),
+      "color" => "blue"
+    },
+    {
+      "_id"   => BSON::ObjectId('...'),
+      "color" => "indigo"
+    }
+  ]
+}
+bunting.save! # don't forget to save</source>
+
+The @many@ call in @Bird@ figures out that its target is supposed to be an embedded document and behaves appropriately.  Because all feathers are going to be embedded in a @Bird@ object, it's unnecessary to define a @bird_id@ key in @Feather@.  If we declared @belongs_to :bird@ in @Feather@, @belongs_to@ would try to use @bird_id@ and it wouldn't work. Instead, we call @embedded_in@ which properly defines a working @bird@ method on instances of @Feather@.
+
+<source:ruby>bunting.feathers[0].bird.feathers[0].bird.feathers[0] # we could keep going... :)</source>
+
+
+h3(#one-to-one-example). One-to-One Example
+
+New Caledonian Crows are some of the smartest animals on the planet.  In addition to using objects they find as tools, New Caledonian Crows also "modify existing objects to create novel tools":http://www.youtube.com/watch?v=TtmLVP0HvDg&NR=1 and "can solve spatial problems at a higher level than apes":http://www.youtube.com/watch?v=M52ZVtmPE9g. In the wild, the crows will sometimes carry "their tool":http://language.psy.auckland.ac.nz/crows/images.htm with them. Let's model this as a one-to-one relationship between a @NewCaledonianCrow@ and a @Tool@.
+
+<source:ruby>class NewCaledonianCrow
+  include MongoMapper::Document
+  key :name
+  one :tool, :dependent => :nullify # MM currently has no default :dependent behavior for the one association, so we specify it to avoid hard-to-track bugs :) 
+end
+
+class Tool
+  include MongoMapper::Document
+  key :shape
+  belongs_to :new_caledonian_crow
+end
+
+# let's try it
+smarty = NewCaledonianCrow.create(:name => "Smarty") # we're not using new, we'll see why in a second 
+smarty.tool? # false
+tool1 = smarty.tool.create(:shape => "hook")
+smarty.tool? # true
+tool1.new_caledonian_crow == smarty # true -- would be nil if we used new to make smarty</source>
+
+Let's see how this relationship is stored in the database.
+
+<source:ruby>smarty.to_mongo # =>
+{
+  "_id"  => BSON::ObjectId('...'),
+  "name" => "Smarty"
+}
+ 
+tool1.to_mongo # =>
+{
+  "_id"   => BSON::ObjectId('...'),
+  "shape" => "hook",
+  "new_caledonian_crow_id" => BSON::ObjectId('...')
+}</source>
+
+We can see that the relationship is stored on the Tool model using a @new_caledonian_crow_id@.
+
+We can replace the association by assigning a new tool to our crow.  The old tool's @new_caledonian_crow_id@ will be nullified.
+
+<source:ruby>tool1.shape = "broken" # oh no it broke!
+tool2 = Tool.new(:shape => "serrated") # make a new tool
+smarty.tool = tool2
+tool2.new_caledonian_crow? # true
+tool2.to_mongo # =>
+{
+  "_id"   => BSON::ObjectId('...'),
+  "shape" => "serrated",
+  "new_caledonian_crow_id" => BSON::ObjectId('...')
+}
+
+tool1.reload.new_caledonian_crow? # false
+tool1.to_mongo # =>
+{
+  "_id"   => BSON::ObjectId('...'),
+  "shape" => "broken",
+  "new_caledonian_crow_id" => nil
+}</source>
+
+h3(#one-to-one-embedded-example). One-to-One Embedded Example
+
+We can also use @one@ with embedded documents.  It's pretty easy, here's an example.
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  key :name
+  one :beak
+end
+
+class Beak
+  include MongoMapper::EmbeddedDocument
+  key :type
+  embedded_in :bird
+end
+
+# let's try it
+parakeet = Bird.new(:name => 'Parakeet')
+parakeet.beak? # false
+parakeet.beak.build(:type => 'seed munching') # can't "create" embedded docs, use "build" instead
+parakeet.beak? # true
+
+parakeet.to_mongo # =>
+{
+  "_id"  => BSON::ObjectId('...'),
+  "name" => "Parakeet",
+  "beak" => {
+    "_id"  => BSON::ObjectId('...'),
+    "type" => "seed munching"
+  }
+}
+
+parakeet.beak = Beak.new(:type => 'ferocious eagle bill')
+parakeet.beak.type # "ferocious eagle bill"
+parakeet.beak = nil # this is how we remove the one association
+parakeet.beak? # false</source>
+Note that the "latest version of MongoMapper":https://github.com/jnunemaker/mongomapper on Github uses @.build_beak@ instead of @.beak.build@.  The new syntax mirrors ActiveRecord and allows the association to return a true @nil@ instead of a proxy.  A true @nil@ allows @if parakeet.beak@ to correctly evaluate to false when the parakeet has no beak.
+
+h3(#many-to-many-example). Many-to-Many Examples
+
+Array keys make many-to-many associations really easy in MongoDB compared to most SQL implementations.  John Nunemaker has written "an excellent post":http://mongotips.com/b/array-keys-allow-for-modeling-simplicity/ on the easily modeling many-to-many relationships with array keys.  We'll expand on his example.
+
+In SQL, you might model a many-to-many relationship by creating a "join table."  MongoDB doesn't have joins.  But because arrays are first class citizens in MongoDB, inside one of our models we simply store an array of ObjectId's.  It's really that easy.  
+
+We tell MongoMapper to use an array key with the @many :in@ syntax.
+
+<source:ruby>class Book
+  include MongoMapper::Document
+  key :title
+  key :author_ids, Array
+  many :authors, :in => :author_ids
+end
+
+class Author
+  include MongoMapper::Document
+  key :name
+end</source>
+
+Each book stores the id's of its authors in the @author_ids@ key.  This allows books to have many authors, and authors to have many books.
+
+Our @Author@ model is sparse.  MongoMapper doesn't have a proxy to live opposite of @many :in@.  We'll address that in a moment, but first let's practice what we can do from just the @Book@ side.
+
+<source:ruby>ruby_book = Book.new(:title => "Programming Ruby")
+ruby_book.authors << Author.new(:name => "Dave Thomas")
+ruby_book.authors << Author.new(:name => "Chad Fowler")
+ruby_book.authors << Author.new(:name => "Andy Hunt")
+ruby_book.save
+ruby_book.reload.authors.map(&:name) # ["Dave Thomas", "Chad Fowler", "Andy Hunt"]
+
+# what does it look like in the database?
+ruby_book.to_mongo # =>
+{
+	"_id"        => BSON::ObjectId('...'),
+	"title"      => "Programming Ruby",
+	"author_ids" => [
+		BSON::ObjectId('4d461f7f78fca242e9000021'),
+		BSON::ObjectId('4d461f7f78fca242e9000022'),
+		BSON::ObjectId('4d461f7f78fca242e9000023')
+	]
+}
+
+dt = ruby_book.authors[0]
+# what Mr. Thomas look like in the database?
+dt.to_mongo
+{
+	"_id"  => BSON::ObjectId('...'),
+	"name" => "Dave Thomas"
+}</source>
+
+We can see that the @many :in@ just stores a list of id's in an array.  We can see how one book can point to many authors, and one author can be pointed to by many books.  Did I hear someone mention that we didn't need to migrate and create a join table?  That's right: many-to-many is easy with MongoDB and MongoMapper.
+
+However, right now we can only go from books to authors. We can't write @my_author.books@. Let's hack together some missing functionality on the @Author@ side.
+
+<source:ruby>class Author
+  include MongoMapper::Document
+  after_destroy :remove_from_books
+  
+  key :name
+  
+  # we want my_author.books.all (and .paginate, .first, etc.)
+  # we want my_author.books << cool_book
+  # let's return a plucky query with a << method
+  def books
+    proxy = Book.where(:author_ids => id)
+
+    def proxy.<<(book)
+      book.save! if book.new_record?
+      Book.add_to_set({:_id => book.id}, {:author_ids => @author_id})      
+    end    
+    proxy.instance_variable_set(:@author_id, id)    
+
+    proxy
+  end
+  
+  private
+    def remove_from_books
+      Book.pull({:author_ids => id}, {:author_ids => id})
+    end
+end</source>
+
+Whoa! What have we done here?
+
+First, we wanted a way to get from authors to books, so we defined a @books@ method that simply returns a plucky @where@ query.  By returning a plucky query we can do all the "plucky goodness":/documentation/plugins/querying/, such as @.first@, @.paginate@, @.sort@, and @.where@.
+
+We also wanted to be able to add books to the author.  Using Ruby magic, we added a @<<@ method to the query so we could write @my_author.books << cool_book@.  We have to save the book when we add it because the @add_to_set@ "modifier":/documentation/plugins/modifiers works directly on the database.
+
+The last thing we did was make a @remove_from_books@ method that we call after the book is destroyed.  Calling @remove_from_books@ removes the author's id from any of its books using the @pull@ "modifier":/documentation/plugins/modifiers.
+
+Modifiers?  What?  Well, @pull@ and @add_to_set@ are two of MongoMappers's "modifier wrappers":/documentation/plugins/modifiers.  Modifier methods simply execute "MongoDB update modifiers":http://www.mongodb.org/display/DOCS/Updating#Updating-ModifierOperations, which in our case allows in-database mass updates of arrays.  The modifier's first argument is a query which tells MongoDB which documents to update.  The second argument describes the update.  As you might guess, @pull@ removes the specified item from the array in the matched documents, while @add_to_set@ adds the item to the array if the item is not already there.
+
+Whew!  That's a lot of new code.  Let's see it in action by continuing our example from above.  Remember we just put the author with @:name => "Dave Thomas"@ into the dt variable.
+
+<source:ruby># continuing our example featuring Ruby books and authors!
+dt.books.first.title # "Programming Ruby" -- our query hack worked!
+rails_book = Book.new(:title => "Agile Web Development with Rails")
+rails_book.authors << Author.new(:name => "Sam Ruby")
+rails_book.save
+dt.books << rails_book
+dt.books.all.map(&:title) # ["Programming Ruby", "Agile Web Development with Rails"]
+rails_book.reload.authors.map(&:name) # ["Dave Thomas", "Sam Ruby"]</source>
+
+Wow.  That was a lot of work.  But was it really?  We had no migrations.  No join table.  Yes, we did a bit of hacking on the model that didn't have the array, but in practice we might not need those hacks.  After all, the @many :in@ proxy provides "almost all of the methods":#method-table that @many@ provides.  It's quite full-featured.
+
+But if you do find you need a proxy opposite of @many :in@ and the hacks above aren't enough, perhaps you're the one to code the patch!
+
+h2(#polymorphic-associations). Polymorphic Associations
+
+* "Polymorphism on the @many@ (or @one@) Side":#polymorphism-on-the-many-or-one-side
+** "Basic polymorphism on the @many@ side":#basic-polymorphism-on-the-many-side
+** "Polymorphism on the @many@ side with SCI":#polymorphism-on-the-many-side-with-sci
+* "Polymorphism on the @belongs_to@ (or embedded) Side":#polymorphism-on-the-belongs_to-or-embedded-side
+** "Polymorphism on the @belongs_to@ side with SCI":#polymorphism-on-the-belongs_to-side-with-sci
+** "Embedded polymorphism":#embedded-polymorphism
+* "List of Supported Polymorphic Cases":#list-of-supported-polymorphic-cases
+* "Strategies for Unsupported Polymorphic Cases":#strategies-for-unsupported-polymorphic-cases
+
+So, we want to play with the fire.  Great!  Let's explore polymorphic associations.
+
+h3(#polymorphism-on-the-many-or-one-side). Polymorphism on the @many@ (or @one@) Side
+
+An association is _polymorphic_ when one side of the association won't be a single model.  For example, say we're going to add a comment system to our website.  We want users to be able to comment on articles _and_ products.  So a @Comment@ might belong to an @Article@ _or_ a @Product@.  In this case, the polymorphism is on the models that declare @many@, that is, @Article@ and @Product@. Let's take a look at some ways to do this.
+
+(All the following examples should work fine using @one@ in place of @many@, so no specific examples of polymorphic @one@ are provided.)
+
+h4(#basic-polymorphism-on-the-many-side). Basic polymorphism on the @many@ side
+
+Because different articles and products are stored in different collections, each of our @Comment@ objects needs to know whether to look in the products collection or the articles collection for its associated object.  MongoMapper provides a syntax to handle that.
+
+<source:ruby>class Article
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Product
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Comment
+  include MongoMapper::Document
+  key :text, String
+  belongs_to :commentable, :polymorphic => true
+end
+
+# let's try it
+article = Article.create
+article.comments.create(:text => "Snazzy page!")
+article.save
+product = Product.create
+product.comments.create(:text => "It broke after a month.  But it was a good month.")
+product.comments.create(:text => "Flies like a dream...until it crashes.")
+product.save
+article.reload.comments.count # 1 -- it worked!
+product.reload.comments.count # 2 -- it worked!
+
+# what does it look like in the database?
+comment = product.comments.first
+comment.to_mongo # =>
+{
+  "_id"              => BSON::ObjectId('...'),
+  "text"             => "It broke after a month.  But it was a good month.",
+  "commentable_type" => "Product",
+  "commentable_id"   => BSON::ObjectId('...')
+}
+comment.commentable.class # Product
+comment.commentable.to_mongo # =>
+{
+  "_id" => BSON::ObjectId('...')
+}
+
+# does it work the other way?
+new_product = Product.new
+new_comment = Comment.create
+new_comment.commentable = new_product
+new_comment.save
+new_comment.reload.commentable == new_product # true -- yay!
+new_product.reload.comments.first == new_comment # true -- yay!</source>
+
+Let's take a look at what we've done here.  
+
+In the @Article@ and @Product@ models, the @:as@ option on @many@ tells MongoMapper that _this_ end of the association could be one of many types.  When @many@ looks for comments in the comments collection, it searches the @:commentable_id@ key.  When the association is saved, @many@ makes sure to set the @:commentable_type@ to the parent's class.  The @:commentable_type@ needs to be set for the @belongs_to@ half of the association to work correctly.
+
+In the @Comment@ model, the @:polymorphic@ option on @belongs_to@ tells MongoMapper that the _associated documents_ may be of any type.  To look for its associated document, a comment will first look at its @:commentable_type@ to see what class the associated document is.  Then @belongs_to@ maps that class to a collection and queries that collection for a document that matches the @:commentable_id@.
+
+h4(#polymorphism-on-the-many-side-with-sci). Polymorphism on the @many@ side with SCI
+
+We could also represent this polymorphic association using "single collection inheritance":/documentation/plugins/sci.  Sometime inheritance is the wrong solution, but we'll give it a go anyway.  Let's revise our example and see if it works.
+
+<source:ruby>class Commentable
+  include MongoMapper::Document
+  many :comments, :as => :commentable
+end
+
+class Article < Commentable
+end
+
+class Product < Commentable
+end
+
+class Comment
+  include MongoMapper::Document
+  key :text, String
+  belongs_to :commentable, :polymorphic => true
+end
+
+# let's try it
+article = Article.create
+article.comments.create(:text => "Snazzy page!")
+article.save
+product = Product.create
+product.comments.create(:text => "It broke after a month.  But it was a good month.")
+product.comments.create(:text => "Flies like a dream...until it crashes.")
+product.save
+article.reload.comments.count # 1 -- it worked!
+product.reload.comments.count # 2 -- it worked!
+
+# what does it look like in the database?
+comment = product.comments.first
+comment.to_mongo # =>
+{
+  "_id"              => BSON::ObjectId('...'),
+  "text"             => "It broke after a month.  But it was a good month.",
+  "commentable_type" => "Product",
+  "commentable_id"   => BSON::ObjectId('...')
+}
+comment.commentable.class # Product
+comment.commentable.to_mongo # =>
+{
+  "_id"   => BSON::ObjectId('...'),
+  "_type" => "Product"
+}
+
+# does it work the other way?
+new_product = Product.new
+new_comment = Comment.create
+new_comment.commentable = new_product
+new_comment.save
+new_comment.reload.commentable == new_product # true -- yay!
+new_product.reload.comments.first == new_comment # true -- yay!</source>
+
+Yay, it works!  The only schema difference here is that the @Product@ objects now have a @_type@ key from SCI.  If inheritance properly represents your problem, this could be the way to go.
+
+That said, we might have expected this case to work without even using the polymorphic syntax of @many … :as => :commentable@ and @belongs_to … :polymorphic => true@.  However, in the current implementation MM needs the polymorphic cues (without them @my_product.comments@ would look for @:product_id@ in the @Comment@ documents).
+
+h3(#polymorphism-on-the-belongs_to-or-embedded-side). Polymorphism on the @belongs_to@ (or Embedded) Side
+
+If we need the "child" end of a @many@ relationship to be any type of model, we must either "embed the children":#embedded-polymorphism or use SCI for the children.  If we can't embed or inherit, the only option is to "hack it":#strategies-for-unsupported-polymorphic-cases.
+
+h4(#polymorphism-on-the-belongs_to-side-with-sci). Polymorphism on the @belongs_to@ side with SCI
+
+If we can't embed and we need the @belongs_to@ side of a @many@ to be in different models, the only supported option is to use "single collection inheritance":/documentation/plugins/sci.  Let's look at an example.
+
+<source:ruby>class Human
+  include MongoMapper::Document
+  many :favorite_things, :polymorphic => true
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :human
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+# let's try it
+maria = Human.new
+raindrops = RaindropsOnRoses.new
+maria.favorite_things << raindrops
+maria.save # technically the << saved maria, but I wouldn't count on it in the future
+maria.reload.favorite_things.first.class # RaindropsOnRoses
+maria.favorite_things.first == raindrops.reload # true
+maria.to_mongo # =>
+{
+  "_id" => BSON::ObjectId('...')
+}
+raindrops.to_mongo # =>
+{
+  "_id"      => BSON::ObjectId('...'),
+  "_type"    => "RaindropsOnRoses",
+  "human_id" => BSON::ObjectId('4d30ea1b78fca22d49000019')
+}</source>
+
+In this case, setting @:polymorphic => true@ on the @many@ association simply adds behavior to make sure the @_type@ key is set on a favorite thing at save (and it may actually be redundant with SCI&mdash;the above example works without it).  We don't need @:as@ on the @belongs_to@ because all the humans will be in the @human@ collection which is where @belongs_to@ will look by default and SCI will make sure that the object is loaded as the proper type.
+
+h4(#embedded-polymorphism). Embedded polymorphism
+
+MongoMapper also allows a single array to embed documents of different types.  Let's have Maria carry her favorite things with her.
+
+<source:ruby>class Human
+  include MongoMapper::Document
+  many :favorite_things, :polymorphic => true
+end
+
+class FavoriteThing
+  include MongoMapper::EmbeddedDocument
+  embedded_in :human
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+# and it doesn't have to inherit
+class WhiskersOnKittens
+  include MongoMapper::EmbeddedDocument
+  embedded_in :human  
+end
+
+# let's try it
+maria = Human.new(:favorite_things => [RaindropsOnRoses.new, WhiskersOnKittens.new])
+maria.save
+maria.reload.favorite_things.map(&:class) # [RaindropsOnRoses, WhiskersOnKittens]
+maria.to_mongo # =>
+{
+  "_id" => BSON::ObjectId('...'),
+  "favorite_things" => [
+    {
+      "_id"   => BSON::ObjectId('...'),
+      "_type" => "RaindropsOnRoses"
+    },
+    {
+      "_id"   => BSON::ObjectId('...'),
+      "_type" => "WhiskersOnKittens"
+    }
+  ]
+}</source>
+
+MongoMapper used the @_type@ key to store the class name and properly mapped the objects back to that class when we reloaded.  Now Maria can have her favorite things with her wherever she goes.
+
+h3(#list-of-supported-polymorphic-cases). List of Supported Polymorphic Cases
+
+MongoMapper doesn't support polymorphism for all conceivable relationships.  Polymorphism is supported in the following cases:
+
+* *@many@ and @belongs_to@* _Different_ models can declare @many@, each points to a _single_ model type in which we declare @belongs_to@.  Also, with single collection inheritance, _different_ models can declare @belongs_to@, with @many@ defined in a _single_ model type.
+* *@one@ and @belongs_to@* _Different_ models can declare @one@, each points to a _single_ model type in which we declare @belongs_to@.  Also, with single collection inheritance, _different_ models can declare @belongs_to@, with @one@ defined in a _single_ model type.
+* *@many@ embedded* In this case, the embedded documents can be of any type.
+* *@one@ embedded* Again, the embedded document can be of any type.
+
+If you're using @one@ and you need the @belongs_to@ to be in several different models and you don't want to use SCI, just swap @one@ and @belongs_to@: put the @one@ in the different models and have @belongs_to@ in the single model. We haven't gone over any examples of @one@, it should function similar to @many@ in the examples above.
+
+Those are all the _supported_ cases, but with a bit of ingenuity we can stretch it a bit.
+
+h3(#strategies-for-unsupported-polymorphic-cases). Strategies for Unsupported Polymorphic Cases
+
+With some creative uses of SCI, we can make working polymorphic relationships for cases where we need polymorphism on both sides of a relationship, even though MongoMapper wasn't directly designed for it.  It does work, but if the lack of native support for your use case is bothersome and you think of a nice solution, feel free to "patch the source":http://www.github.com/jnunemaker/mongomapper and submit a pull request.
+
+h4. Polymorphism on both sides of one-to-many using SCI
+
+Say we want humans _and_ dolphins to both have _different types_ of favorite things.  We can model it by using "single collection inheritance":/documentation/plugins/sci on both sides of the relationship.
+
+<source:ruby>class Liker
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class Human < Liker
+end
+
+class SophisticatedDolphin < Liker
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :liker, :polymorphic => true
+end
+
+class RaindropsOnRoses < FavoriteThing
+end
+
+# let's try it
+maria     = Human.new
+dolphin   = SophisticatedDolphin.new
+
+raindrops1 = RaindropsOnRoses.new
+raindrops2 = RaindropsOnRoses.new
+favorite1  = FavoriteThing.new
+favorite2  = FavoriteThing.new
+
+# from the many side
+
+maria.favorite_things += [raindrops1, favorite1]
+maria.save
+dolphin.favorite_things += [raindrops2, favorite2]
+dolphin.save
+
+maria.reload.favorite_things[0].class # RaindropsOnRoses
+maria.reload.favorite_things[1].class # FavoriteThing
+maria.reload.favorite_things[0] == raindrops1 # true
+maria.reload.favorite_things[1] == favorite1  # true
+
+dolphin.reload.favorite_things[0].class # RaindropsOnRoses
+dolphin.reload.favorite_things[1].class # FavoriteThing
+dolphin.reload.favorite_things[0] == raindrops2 # true
+dolphin.reload.favorite_things[1] == favorite2  # true
+
+# from the belongs_to side
+
+raindrops1.reload.liker.class # Human
+raindrops2.reload.liker.class # SophisicatedDolphin
+more_raindrops = RaindropsOnRoses.create(:liker => maria)
+more_raindrops.reload.liker == raindrops1.liker # true
+maria.reload.favorite_things.include?(more_raindrops) # true</source>
+
+h4. Polymorphism on both sides of one-to-many with full polymorphism on the @many@ side
+
+While we need SCI to have polymorphism on the @belongs_to@ side, we don't need it for polymorphism on the @many@ side.  The above example could be rewritten like this:
+
+<source:ruby>class Human
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class SophisticatedDolphin
+  include MongoMapper::Document
+  many :favorite_things, :as => :liker
+end
+
+class FavoriteThing
+  include MongoMapper::Document
+  belongs_to :liker, :polymorphic => true
+end
+
+class RaindropsOnRoses < FavoriteThing
+end</source>
+
+All our tests from the previous example would have the same results.
+
+h4. Polymorphism on both sides of many-to-may with SCI and array keys
+
+The cleanest solution is to represent a many-to-many association in MongoDB is to "store a list of ObjectId's in an array key":#many-to-many-example.  To make the many-to-many polymorphic, we can use "single collection inheritance":/documentation/plugins/sci on one or both sides of the relationship.  If polymorphism on either side of a many-to-many can't be done cleanly in your case, but you are willing to trade ease for flexibility, you _could_ "simulate a join table in MongoDB":#a-mongodb-join-table.  We're going to try to avoid that.
+
+Here we'll use SCI polymorphism on both sides of a many-to-many using array keys.  You could just as easily put SCI on only one side if that's all you needed.
+
+<source:ruby>class Animal
+  include MongoMapper::Document
+  key :name
+  key :food_ids, Array, :typecast => 'ObjectId'
+  many :foods, :in => :food_ids
+end
+
+class Rat < Animal
+end
+
+class Food
+  include MongoMapper::Document
+  key :taste
+  after_destroy :remove_from_animals
+  
+  def animals
+    Animal.where(:food_ids => id)
+  end
+  
+  private
+    def remove_from_animals
+      Animal.pull({:food_ids => id}, {:food_ids => id})
+    end
+end
+
+class Garbage < Food
+end
+
+# let's try it
+rat = Rat.create(:name => "Nemo")
+rat.foods << Garbage.new(:taste => "salty")
+rat.save
+garbage = rat.foods.first
+garbage.taste # salty
+garbage.animals.first.name # Nemo
+
+# is the SCI loading the objects as the proper class?
+garbage.animals.first.class # Rat
+rat = garbage.animals.first
+rat.reload.foods.first.class # Garbage</source>
+
+So, there we go&mdash;polymorphism on both sides of a many-to-many association.  See the "many-to-many example":#many-to-many-example for adding more functionality to the many-to-many association.
+
+h4(#a-mongodb-join-table). A MongoDB join table
+
+If we can't use SCI and need polymorphism on both sides of your relationship, we might consider creating a join table.  In practice, however, a join table is probably going to be a bad idea.  To prove the point, here's an example of many-to-many polymorphism via a join table:
+
+<source:ruby>class Rat
+  include MongoMapper::Document
+  many :animal_eats, :as => :animal
+end
+
+class Seagull
+  include MongoMapper::Document
+  many :animal_eats, :as => :animal
+end
+
+# here's our "join table" document
+# remember it's singular: AnimalEat
+class AnimalEat
+  include MongoMapper::Document
+  belongs_to :animal, :polymorphic => true
+  belongs_to :food, :polymorphic => true
+end
+
+class Garbage
+  include MongoMapper::Document
+  many :animal_eats, :as => :food
+end
+
+class PotatoChips
+  include MongoMapper::Document
+  many :animal_eats, :as => :food
+end
+
+# let's try it
+rat = Rat.create
+rat.animal_eats.build(:food => Garbage.new)
+rat.save
+garbage = rat.animal_eats.first.food
+garbage.reload
+garbage.animal_eats.first.animal == rat # true</source>
+
+As you can see, that join table is going to be a pain to manage in MongoDB.   We'll have to make fancy callbacks to destroy both the join documents when an object is destroyed.  We'll have to code our own magic to avoid the "N+1 query problem":http://www.pbell.com/index.cfm/2006/9/17/Understanding-the-n1-query-problem.  It's all possible, but it's going to be difficult.
+
+h4(#if-all-else-fails). If all else fails
+
+If all else fails and you can't adequately represent the relationships between your data with MongoMapper, it may be okay to ditch Mongo and switch back to a _relational_ database.  We won't cry...publicly.
+
+Sniff.
+
+h2(#association-extensions). Association Extensions
+
+You can extend your core model associations to help you return variations on the associated objects. See the "Scopes":/documentation/plugins/scopes/#association-extensions section for more info.  Here's a brief example.
+
+<source:ruby>many :posts do 
+  def recent 
+    all(:order => 'created_at desc') 
+  end 
+end 
+
+# or... 
+module PostExtensions 
+  def recent 
+    all(:order => 'created_at desc') 
+  end 
+end 
+
+many :posts, :extend => PostExtensions</source>
+
+
+h2(#method-table). Method Table
+
+When you define an association on your model, MongoMapper defines a lot of methods you can call on that association.  Here's a table of all the methods that might be useful.<style>section td { padding: 1px 4px; font-size: 12px; width: 78px; border: solid 1px #bbb; } </style>
+
+||@many@|@many@ <br />in array|@many@ embedded|@one@|@one@ embedded|@belongs_to@|
+|*On the instance*|||||||
+|others|x|x|x||||
+|others=|x|x|x||||
+|other||||x|x|x|
+|other=||||x|x|x|
+|other?||||x|x|x|
+||||||||
+|*On the association*|||||||
+|klass|x|x|x|x|x|x|
+|collection|x|x|x|x|x|x|
+|association|x|x|x|x|x|x|
+|to_json|x|x|x|x|x|x|
+|as_json|x|x|x|x|x|x|
+|loaded?|x|x|x|x|x|x|
+|nil?|x|x|x|x|x|x|
+|blank?|x|x|x|x|x|x|
+|present?|x|x|x|x|x|x|
+|reload|x|x|x|x|x|x|
+|reset|x|x|x|x|x|x|
+|===|x|x|x|x|x|x|
+|replace|x|x|x|x|x|x|
+|<<|x|x|x||||
+|push|x|x|x||||
+|concat|x|x|x||||
+|build|x||x|x|x||
+|create|x|x||x|||
+|create!|x|x||x|||
+|destroy_all|x|x|||||
+|delete_all|x|x|||||
+|nullify|x|x|||||
+|count|x|x|x||||
+|to_ary|x|x|x||||
+|include?|x|x|x||||
+|find|x|x|x||||
+|find!|x|x|||||
+|paginate|x|x|||||
+|all|x|x|||||
+|first|x|x|||||
+|last|x|x|||||
+|"dynamic finder methods":https://github.com/jnunemaker/mongomapper/blob/master/lib/mongo_mapper/plugins/dynamic_querying/dynamic_finder.rb|x|x|||||
+|"other query methods from plucky":https://github.com/jnunemaker/mongomapper/blob/master/lib/mongo_mapper/plugins/querying/plucky_methods.rb|x||||||
+
+h2(#when-do-associations-trigger-saves). When do associations trigger saves?
+
+Let's take a look at the one @tree@ many @birds@ example again.
+
+<source:ruby>tree = Tree.new(:birds => [Bird.new(:name => 'Jay')])
+tree.birds.create!(:name => 'Wren') # <Bird ... name: "Wren" ... >
+b = tree.birds.build(:name => 'House Finch') # <Bird ... name: "House Finch" ... >
+b.save! # true
+tree.new? # true -- the birds have been saved but the trees haven't
+tree.birds << Bird.new(:name => 'Falcon') # []
+tree.new? # false -- the concat triggers a save, I don't know why
+tree.birds.size # 4</source>
+
+h2(#schema). Schema
+
+MongoMapper saves all associations in the database using a defined schema:
+
+* For non-embedded associations, _the association key goes on the document that declares belongs_to_.  The only exception is "many-to-many with array keys":#many-to-many-schema.
+* An embedded @one@ is stored as a hash nested inside the parent document.
+* An embedded @many@ is stored as an array of hashes inside the parent document.
+* For polymorphic associations, a @_type@ key is also stored.
+** If the polymorphism is provided by "Single Collection Inheritance":/documentation/plugins/sci then the @_type@ key is part of the polymorphic document (all the documents are stored in a single collection so the actual type of the document is stored in the document itself.)
+** Embedded polymorphic documents also store a @_type@ key.
+** If the "polymorphic documents are stored in different collections":#basic-polymorphism-on-the-many-side (non-"SCI":/documentation/plugins/sci and non-embedded), then the model that declares @belongs_to@ also stores a <em>parent</em>@_type@ key so the object knows in which collection to look for its parent document.
+
+The examples below should help us digest this.  For brevity and focus, the example models are as minimal as possible.
+
+h3(#one-to-many-schema). One-to-Many Schema
+
+!http://mongomapper.harmonyapp.com/assets/4d86b3f1dabe9d69b5000586/associations_one_to_many_schema.png(One-to-many schema)!
+
+h2(#class-methods). Class Methods
+
+h3(#class-methods-belongs-to-many-one). belongs_to(association_id, options={}, &extension)
+	many(association_id, options={}, &extension)
+	one(association_id, options={}, &extension)
+	
+Your friendly neighborhood association.
+
+h4(#class-methods-belongs-to-many-one-parameters). Parameters
+
+* *association_id*: The name used for the association methods.  Also used to find the class of the associated object(s) if @:class@ or @:class_name@ isn't given.
+* *options*: See below. Any of @:as@ @:class@ @:class_name@ @:dependent@ @:extend@ @:foreign_key@ @:in@ @:polymorphic@
+* *&extension*: If a block is provided, any methods defined in the block may be called on the association.  Useful for scoping.  See the "Scopes":/documentation/plugins/scopes/#association-extensions section for more info.
+
+h4(#class-methods-belongs-to-many-one-options). Options
+
+*@:as@*
+*@:class@*
+*@:class_name@*
+*@:dependent@*  Defines what to do with the associated documents when this document is destroyed or the association is broken.  If not specified, the associated documents are untouched.  The @:dependent@ option only applies to @many@ and @one@ associations when the associated documents are NOT embedded.
+	:destroy - destroy is called on all the associated documents
+    :delete_all - all the associated documents are simply erased from the database
+    :nullify - the foreign keys to this document are set to nil inside each associated document
+*@:extend@* You may provide a module of methods to be applied to the association.  Useful for scoping.  See the "Scopes":/documentation/plugins/scopes/#association-extensions section for more info.
+*@:foreign_key@*
+*@:in@*
+*@:polymorphic@*
+
+h3(#class-methods-associations). associations
+
+Allows you to introspect a model's associations.  Returns a @HashWithIndifferentAccess@ describing the associations defined on the model.  The keys are the names of the associations, and the values are @Associations::Base@ objects.
+
+h4(#class-methods-associations-example). Example
+
+<source:ruby>class Bird
+  include MongoMapper::Document
+  many :feathers
+end
+
+class Feather
+  include MongoMapper::Document
+end
+
+Bird.associations # {"feathers"=>#<MongoMapper::Plugins::Associations::Base: ... >}
+assoc = Bird.associations[:feathers]
+assoc.class_name # "Feather" 
+assoc.klass # Feather 
+assoc.many? # true
+assoc.one? # false 
+assoc.belongs_to? # false
+assoc.polymorphic? # false 
+assoc.as? # false 
+assoc.in_array? # false
+assoc.embeddable? # false 
+assoc.type_key_name # "_type" 
+assoc.as # :feathers 
+assoc.foreign_key # "feathers_id" 
+assoc.ivar # "@_feathers" 
+assoc.proxy_class # MongoMapper::Plugins::Associations::ManyDocumentsProxy</source>

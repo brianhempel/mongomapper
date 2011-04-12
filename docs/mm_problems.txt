@@ -1,0 +1,6 @@
+@one@ doesn't unset associations properly by default
+one's mass assignment doesn't call accessors after 1 level
+@saving@ associations is horridly inconsistent ... at one point we tried to set an association in a before_save callback and got an infinite loop
+@caching@ gotchas happen all the time -- integrate with IdentityMap to make it just work?  MongoMappers underlying association principles are *not simple enough* to expect users to handle edge cases without lots of pain and trial and error.
+@two-way many-to-many@ polymorphism is unsupported without SCI
+@SCI + many@ should be able to work without declaring the association polymorphic
