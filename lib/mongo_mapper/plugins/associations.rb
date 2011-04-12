@@ -23,7 +23,7 @@ module MongoMapper
         end
 
         def associations
-          @associations ||= HashWithIndifferentAccess.new
+          @associations ||= {}
         end
 
         def associations=(hash)
@@ -62,7 +62,7 @@ module MongoMapper
         end
 
         def embedded_associations
-          associations.values.select(&:embeddable?)
+          associations.values.select { |assoc| assoc.embeddable? }
         end
 
         def build_proxy(association)

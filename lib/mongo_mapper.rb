@@ -1,6 +1,6 @@
 # encoding: UTF-8
 require 'plucky'
-require 'active_support/all'
+require 'active_support/core_ext'
 require 'active_model'
 require "mongo_mapper/railtie" if defined?(Rails)
 
@@ -32,7 +32,6 @@ module MongoMapper
     autoload :Callbacks,          'mongo_mapper/plugins/callbacks'
     autoload :Caching,            'mongo_mapper/plugins/caching'
     autoload :Clone,              'mongo_mapper/plugins/clone'
-    autoload :Descendants,        'mongo_mapper/plugins/descendants'
     autoload :Dirty,              'mongo_mapper/plugins/dirty'
     autoload :Document,           'mongo_mapper/plugins/document'
     autoload :DynamicQuerying,    'mongo_mapper/plugins/dynamic_querying'

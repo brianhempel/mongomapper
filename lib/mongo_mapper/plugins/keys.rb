@@ -7,6 +7,7 @@ module MongoMapper
       extend ActiveSupport::Concern
 
       included do
+        extend ActiveSupport::DescendantsTracker
         key :_id, ObjectId
       end
 
@@ -17,7 +18,7 @@ module MongoMapper
         end
 
         def keys
-          @keys ||= HashWithIndifferentAccess.new
+          @keys ||= {}
         end
 
         def key(*args)
@@ -39,7 +40,7 @@ module MongoMapper
         end
 
         def object_id_keys
-          keys.keys.select { |key| keys[key].type == ObjectId }.map(&:to_sym)
+          keys.keys.select { |key| keys[key].type == ObjectId }.map { |k| k.to_sym }
         end
 
         def object_id_key?(name)
@@ -170,6 +171,7 @@ module MongoMapper
         def initialize_from_database(attrs={})
           @_new = false
           load_from_database(attrs)
+          default_id_value(attrs)
           self
         end
 
@@ -294,7 +296,7 @@ module MongoMapper
           end
 
           def read_key(key_name)
-            if key = keys[key_name]
+            if key = keys[key_name.to_s]
               value = key.get(instance_variable_get(:"@#{key_name}"))
               set_parent_document(key, value)
               instance_variable_set(:"@#{key_name}", value)

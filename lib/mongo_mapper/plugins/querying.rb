@@ -52,7 +52,7 @@ module MongoMapper
         end
 
         def destroy(*ids)
-          find_some!(ids.flatten).each(&:destroy)
+          find_some!(ids.flatten).each { |doc| doc.destroy }
         end
 
         def destroy_all(options={})
@@ -150,13 +150,12 @@ module MongoMapper
         end
 
         def delete
-          @_destroyed = true
-          self.class.delete(id) unless new?
+          self.class.delete(id).tap { @_destroyed = true } if persisted?
         end
 
         private
           def create_or_update(options={})
-            result = new? ? create(options) : update(options)
+            result = persisted? ? update(options) : create(options)
             result != false
           end
 
